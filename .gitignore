@@ -1,0 +1,37 @@
+# Reinstall dependencies from the committed lockfiles.
+/node_modules/
+/vendor/
+
+# Generated bundles and local runtime/database state.
+/public/assets/
+/public/index.html
+/.runtime/
+/coverage/
+/test-results/
+/playwright-report/
+
+# Private configuration and credentials.
+/config/local.php
+/config/mail.local.php
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local data and backups; retain the checked-in SQL schema.
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.sql.gz
+/uploads/
+/public/uploads/
+/backups/
+
+# Operating system files.
+.DS_Store
+Thumbs.db
+Desktop.ini

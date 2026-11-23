@@ -1,0 +1,47 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { build } from 'esbuild';
+import { JSDOM } from 'jsdom';
+
+test('journal UI: search, filters, complete download, prompts and mood survive a saved entry',async(t)=>{
+ const bundle=await build({stdin:{contents:`import React from 'react'; import {createRoot} from 'react-dom/client'; import {flushSync} from 'react-dom'; import App from './src/App.jsx'; import {Composer} from './src/components.jsx'; import {I18nProvider} from './src/i18n.jsx'; const root=createRoot(document.getElementById('root')); window.renderJournalTest=(composer=false)=>flushSync(()=>root.render(<I18nProvider>{composer?<Composer privateEntry onClose={()=>{}} onSaved={()=>{window.saved=true}}/>:<App/>}</I18nProvider>));`,resolveDir:process.cwd(),loader:'jsx'},bundle:true,write:false,format:'iife',logLevel:'error',define:{'process.env.NODE_ENV':'"production"'}});
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost/#journal',runScripts:'outside-only',pretendToBeVisual:true});t.after(()=>dom.window.close());
+ globalThis.window=dom.window;globalThis.document=dom.window.document;
+ const {default:userEvent}=await import('@testing-library/user-event');
+ const {getByRole,getByLabelText,getByText,waitFor}=await import('@testing-library/dom');
+ const doc=dom.window.document,user=userEvent.setup({document:doc});const calls=[];let blob,download='';
+ dom.window.URL.createObjectURL=(value)=>{blob=value;return 'blob:journal-test';};dom.window.URL.revokeObjectURL=()=>{};
+ dom.window.HTMLAnchorElement.prototype.click=function(){download=this.download;};
+ const post={id:1,title:'A quiet day',body:'Journal fixture',mood:'calm',category:'Family',category_id:1,visibility:'private',status:'published',is_owner:true,created_at:'2026-10-10 10:00:00',response:'Just listening',reactions:[]};
+ dom.window.fetch=async(path,options={})=>{
+  calls.push({path,options});let data={ok:true};
+  if(path==='/api/session')data={csrf:'test-csrf',user:{email:'fixture@example.invalid',language:'en',is_admin:false}};
+  else if(path==='/api/preferences')data={categories:[1,2,3,4,5]};
+  else if(path.startsWith('/api/posts?'))data={posts:[post],has_more:false};
+  else if(path.startsWith('/api/writing-drafts/')&&options.method==='GET')data={draft:null};
+  else if(path==='/api/posts'&&options.method==='POST')data={post:{...post,...JSON.parse(options.body)}};
+  return {ok:true,json:async()=>data};
+ };
+ dom.window.eval(bundle.outputFiles[0].text);dom.window.renderJournalTest();
+ await waitFor(()=>assert.ok(getByLabelText(doc,'Search your journal')));
+ await user.type(getByLabelText(doc,'Search your journal'),'quiet');
+ await waitFor(()=>assert.ok(calls.some(c=>c.path.includes('&q=quiet'))));
+ await user.selectOptions(getByLabelText(doc,'Mood',{exact:true}),'sad');
+ await waitFor(()=>assert.ok(calls.some(c=>c.path.includes('&mood=sad'))));
+ await user.selectOptions(getByLabelText(doc,'Category',{exact:true}),'2');
+ await waitFor(()=>assert.ok(calls.some(c=>c.path.includes('category=2'))));
+ await user.click(getByRole(doc,'button',{name:'Clear filters'}));assert.equal(getByLabelText(doc,'Search your journal').value,'');
+ await user.click(getByRole(doc,'button',{name:'Download entire journal'}));
+ await waitFor(()=>assert.ok(download.endsWith('.md')));assert.ok(blob);assert.ok(calls.some(c=>c.path==='/api/posts?scope=journal&sort=oldest&offset=0'));
+ dom.window.renderJournalTest(true);
+ await waitFor(()=>assert.ok(getByText(doc,'Draft autosave is on')));
+ assert.ok(getByRole(doc,'button',{name:'What felt a little easier today?'}));
+ await user.selectOptions(getByLabelText(doc,'How are you feeling?'),'hopeful');
+ await user.click(getByRole(doc,'button',{name:'What felt a little easier today?'}));
+ await user.type(getByLabelText(doc,'Your thought'),'A little reflection for today.');
+ await user.click(getByRole(doc,'button',{name:'Preview',exact:true}));
+ assert.ok(getByText(doc,/Mood: Hopeful/));
+ await user.click(getByRole(doc,'button',{name:'Save privately',exact:true}));
+ await waitFor(()=>assert.equal(dom.window.saved,true));
+ const saved=calls.find(c=>c.path==='/api/posts'&&c.options.method==='POST');assert.equal(JSON.parse(saved.options.body).mood,'hopeful');
+});
